@@ -10,10 +10,10 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
   // ====== CONFIGURAÇÃO — troque pelos dados do SEU projeto Supabase ======
-  const SUPABASE_URL ="https://yssamomqvkderasgucuk.supabase.co"
-  const SUPABASE_ANON_KEY ="sb_publishable_308mN-8U2uno8tyK2gd1fA_AFnDPiHQ"
+ const SUPABASE_URL ="https://yssamomqvkderasgucuk.supabase.co"
+ const SUPABASE_ANON_KEY ="sb_publishable_308mN-8U2uno8tyK2gd1fA_AFnDPiHQ"
   // Chave GRATUITA do Google AI Studio (aistudio.google.com/apikey) — sem cartão de crédito
-  const GEMINI_API_KEY = "AQ.Ab8RN6IQd6XPLUHhMH_iXBxhcW_57p_ctaOi3lxfgEWix5fKEw"
+ const GEMINI_API_KEY = "AQ.Ab8RN6IQd6XPLUHhMH_iXBxhcW_57p_ctaOi3lxfgEWix5fKEw";
   // =========================================================================
 </script>
 <style>
@@ -530,6 +530,9 @@ async function callGemini(parts, jsonMode){
   const candidate = data.candidates && data.candidates[0];
   const text = (candidate && candidate.content && candidate.content.parts)
     ? candidate.content.parts.map(p=>p.text||'').join('\n') : '';
+  if(!text){
+    console.error('Resposta da Gemini sem texto — detalhes:', response.status, data);
+  }
   return text.replace(/```json|```/g,'').trim();
 }
 
