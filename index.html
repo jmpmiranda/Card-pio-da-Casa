@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -448,6 +448,10 @@
   <section id="view-ask" style="display:none;">
     <div class="weeknav">
       <div class="range">Pergunte sobre o cardápio</div>
+      <div style="display:flex; gap:8px;">
+        <button class="ghost-btn" id="chat-history-btn">🕑 Histórico</button>
+        <button class="ghost-btn" id="chat-new-btn">+ Nova</button>
+      </div>
     </div>
     <div class="chat-wrap">
       <div class="chat-suggestions" id="chat-suggestions"></div>
@@ -1658,6 +1662,8 @@ function renderFridgeResult(parsed){
   }
 }
 
+let currentConversationId = null;
+
 function renderChatSuggestions(){
   const box = document.getElementById('chat-suggestions');
   if(chatHistory.length>0){ box.innerHTML=''; return; }
@@ -1689,6 +1695,73 @@ function renderChatLog(){
   log.scrollTop = log.scrollHeight;
 }
 
+function startNewConversation(){
+  currentConversationId = null;
+  chatHistory = [];
+  renderChatLog();
+  renderChatSuggestions();
+}
+document.getElementById('chat-new-btn').onclick = startNewConversation;
+
+async function saveConversation(){
+  if(chatHistory.length===0) return;
+  if(!currentConversationId){
+    const firstUserMsg = chatHistory.find(m=>m.role==='user');
+    const titulo = firstUserMsg ? firstUserMsg.content.slice(0,48) : 'Nova conversa';
+    const { data, error } = await sb.from('conversations').insert({
+      household_id: currentHouseholdId, titulo, mensagens: chatHistory
+    }).select().single();
+    if(!error) currentConversationId = data.id;
+  } else {
+    await sb.from('conversations').update({
+      mensagens: chatHistory, updated_at: new Date().toISOString()
+    }).eq('id', currentConversationId);
+  }
+}
+
+async function openChatHistory(){
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay fullpage';
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="picker-header">
+        <h2>Conversas anteriores</h2>
+        <button class="picker-close" id="history-close" aria-label="Fechar">✕</button>
+      </div>
+      <div class="picker-body"><div id="history-list" class="picker-list"></div></div>
+    </div>
+  `;
+  document.getElementById('overlay-root').appendChild(overlay);
+  overlay.querySelector('#history-close').onclick = ()=>overlay.remove();
+
+  const { data, error } = await sb.from('conversations')
+    .select('id,titulo,updated_at')
+    .eq('household_id', currentHouseholdId)
+    .order('updated_at', { ascending:false });
+
+  const list = overlay.querySelector('#history-list');
+  if(error || !data || data.length===0){
+    list.innerHTML = `<p style="color:var(--ink-soft); font-size:0.9rem;">Nenhuma conversa salva ainda.</p>`;
+    return;
+  }
+  data.forEach(conv=>{
+    const item = document.createElement('div');
+    item.className = 'picker-item';
+    const when = new Date(conv.updated_at).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+    item.innerHTML = `<span class="name">${escapeHtml(conv.titulo||'Conversa')}</span><span class="tag" style="background:var(--sage);">${when}</span>`;
+    item.onclick = async ()=>{
+      const { data: full } = await sb.from('conversations').select('mensagens').eq('id', conv.id).single();
+      currentConversationId = conv.id;
+      chatHistory = (full && full.mensagens) ? full.mensagens : [];
+      renderChatLog();
+      renderChatSuggestions();
+      overlay.remove();
+    };
+    list.appendChild(item);
+  });
+}
+document.getElementById('chat-history-btn').onclick = openChatHistory;
+
 async function sendChatMessage(text){
   text = (text||'').trim();
   if(!text) return;
@@ -1718,18 +1791,23 @@ async function sendChatMessage(text){
   });
   const comboSummary = combos.map(c=>({ nome:c.nome, receitas: c.recipeIds.map(id=>recipeById(id)).filter(Boolean).map(r=>r.name) }));
 
-  const systemContext = `Você é o assistente do app "Cardápio da Casa", ajudando quem cuida da cozinha (pode ser a babá ou alguém da família) a decidir o que cozinhar.
+  const systemContext = `Você é a cozinheira de confiança da casa dentro do app "Cardápio da Casa" — alguém animada com comida, prática no dia a dia e que sempre puxa assunto sobre o que cozinhar. Quem está falando com você pode ser a babá ou alguém da família decidindo o que fazer.
 Receitas cadastradas: ${JSON.stringify(recipeSummary)}
 Cardápio já planejado para esta semana: ${JSON.stringify(weekSummary)}
 Combos que costumam ir juntos: ${JSON.stringify(comboSummary)}
 
-Responda em português, de forma direta e curta (poucas frases), baseando-se primeiro nessas receitas cadastradas. Se a pergunta pedir uma ideia nova que não existe na lista, sugira algo com base no seu conhecimento geral de cozinha brasileira do dia a dia, deixando claro que é uma sugestão nova, não uma receita salva na casa.`;
+Regras de como responder:
+- Fale só sobre comida, cozinha, receitas e o cardápio da casa. Se perguntarem algo totalmente fora disso, responda rapidinho e puxe de volta pra algo relacionado a comida.
+- Sempre que fizer sentido, dê uma sugestão concreta (nome do prato), não só uma resposta genérica — você é proativa, não só reativa.
+- Baseie-se primeiro nas receitas cadastradas acima. Se sugerir algo que não está na lista, deixe claro que é uma ideia nova.
+- Respostas curtas e diretas (poucas frases), em português, com um tom caseiro e prestativo.`;
 
   try{
     const textOut = await callGroq([{ role:'user', content: systemContext + '\n\nPergunta: ' + text }], false);
     thinking.remove();
     chatHistory.push({ role:'assistant', content: textOut || 'Não consegui pensar em uma resposta agora.' });
     renderChatLog();
+    saveConversation();
   }catch(err){
     thinking.remove();
     chatHistory.push({ role:'assistant', content: 'Não consegui responder agora. Tenta de novo em instantes.' });
